@@ -1,5 +1,5 @@
 # Package
-version = "0.1"
+version = "0.2"
 author = "Samantha Marshall"
 description = "dot file symlink creator"
 license = "BSD 3-Clause"

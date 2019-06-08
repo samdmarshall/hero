@@ -5,9 +5,12 @@
 import os
 import tables
 import parsecfg
-import parseopt2
-
-
+import parseopt
+import sequtils
+import strutils
+import terminal
+import algorithm
+import strformat
 # =====
 # Types
 # =====
@@ -15,8 +18,10 @@ import parseopt2
 type
   Subcommand = enum
     None,
-    Check,
-    Update
+    Usage,
+    Version,
+    Update,
+    Status
 
 type
   Settings = object
@@ -32,15 +37,13 @@ type
 # =========
 
 proc progName(): string =
-  result = getAppFilename().extractFilename()
+  result = "Hero"
 
 proc usage(): void =
-  echo("usage: " & progName() & " [-v|--version] [-h|--help] [check|update]")
-  quit(QuitSuccess)
+  echo("usage: " & progName() & " [-v|--version] [-h|--help] [status|update]")
 
 proc versionInfo(): void =
-  echo(progname() & " v0.1")
-  quit(QuitSuccess)
+  echo(progname() & " v0.2")
 
 proc parseSettings(settings: OrderedTableRef[string, string]): Settings =
   var config = Settings(root: getCurrentDir())
@@ -51,9 +54,6 @@ proc parseSettings(settings: OrderedTableRef[string, string]): Settings =
     else:
       discard
   return config
-
-proc parseLinks(data: OrderedTableRef[string, string]): seq[Link] =
-  return @[]
 
 proc initSettings(settings: Config): seq[Link] =
   var links = newSeq[Link]()
@@ -69,19 +69,14 @@ proc initSettings(settings: Config): seq[Link] =
         let link_item = Link(original: full_original_path, linkpath: full_link_path)
         links.add(link_item)
   return links
-  
+
 # ===========================================
 # this is the entry-point, there is no main()
 # ===========================================
 
 var subcommand = None
 
-let base_path =
-  if not existsEnv("XDG_CONFIG_HOME"):
-    getEnv("XDG_CONFIG_HOME")
-  else:
-    expandTilde("~/.config")
-let hero_config_path = base_path.joinPath("hero/hero.ini")
+let hero_config_path = getConfigDir().joinPath("hero/hero.ini")
 
 if not existsFile(hero_config_path):
   echo("Unable to load settings file at path: " & hero_config_path)
@@ -89,41 +84,47 @@ if not existsFile(hero_config_path):
 
 let configuration = loadConfig(hero_config_path)
 
-for kind, key, value in getopt():
+var parser = initOptParser()
+for kind, key, value in parser.getopt():
   case kind
   of cmdLongOption, cmdShortOption:
     case key
-    of "help", "h":
-      usage()
-    of "version", "v":
-      versionInfo()
-    else:
-      discard
+    of "help", "h": subcommand = Usage
+    of "version", "v": subcommand = Version
+    else: discard
   of cmdArgument:
     case key
-    of "update":
-      subcommand = Update
-    of "check":
-      subcommand = Check
-    else:
-      discard
-  else:
-    discard
+    of "update": subcommand = Update
+    of "status": subcommand = Status
+    else: discard
+  else: discard
 
-let links = initSettings(configuration)
+var links = initSettings(configuration)
 
 case subcommand
-of None:
+of None, Usage:
   usage()
+  quit(QuitSuccess)
+of Version:
+  versionInfo()
+  quit(QuitSuccess)
 else:
+  var lengths = map(links, proc(x:Link): int = x.linkpath.len)
+  var ordered = lengths.sorted(system.cmp[int], Descending)[0] + 1
   for item in links:
     let valid_link = symlinkExists(item.linkpath)
-    if not valid_link:
-      case subcommand
-      of Check:
-        echo("Failure: [" & item.original & " -> " & item.linkpath & "] not linked!")
-        quit(QuitFailure)
-      of Update:
+    let link_status =
+      if not valid_link: "$1 X $2" % [ansiForegroundColorCode(fgRed, true), ansiResetCode]
+      else: "$1-->$2" % [ansiForegroundColorCode(fgGreen, true), ansiResetCode]
+    case subcommand
+    of Status:
+      let classifier =
+        if item.original.existsDir(): "/"
+        else: ""
+      let spacer = " ".repeat(ordered - item.linkpath.len)
+      echo fmt"{item.linkpath}{spacer}{link_status} {item.original}{classifier}"
+    of Update:
+      if not valid_link:
         createSymlink(item.original, item.linkpath)
-      else:
-        discard
+    else:
+      discard
